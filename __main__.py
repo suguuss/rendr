@@ -3,12 +3,13 @@
   python3 -m rendr copper BOARD.kicad_pcb [options]
   python3 -m rendr 3d     BOARD.kicad_pcb [options]
   python3 -m rendr 3d --list
+  python3 -m rendr stackup BOARD.kicad_pcb [options]
 """
 import argparse
 import os
 import sys
 
-from . import boardinfo, copper, render3d
+from . import boardinfo, copper, render3d, stackup
 from .common import Cancelled, Job, JobError, find_kicad_cli
 
 
@@ -54,6 +55,17 @@ def main(argv=None):
     r.add_argument("--transparent", action="store_true", help="transparent background (PNG only)")
     r.add_argument("--format", choices=["png", "jpg"], default=o.format)
     r.add_argument("--no-overview", action="store_true")
+
+    s = sub.add_parser("stackup", help="stackup cross-section with layer table")
+    s.add_argument("pcb")
+    s.add_argument("-o", "--output", help="output folder (default: <board dir>/renders/stackup)")
+    so = stackup.StackupOptions()
+    s.add_argument("--width", type=int, default=so.width, help="image width in px (default %(default)s)")
+    s.add_argument("--light", action="store_true", help="white background (for documents)")
+    s.add_argument("--no-via", action="store_true", help="no plated via in the section")
+    s.add_argument("--no-captions", action="store_true", help="no copper layer captions")
+    s.add_argument("--caption", action="append", default=[], metavar="LAYER=TEXT",
+                   help="replace a copper layer's caption (repeatable)")
     a = ap.parse_args(argv)
 
     if a.cmd == "3d" and a.list:
@@ -82,6 +94,15 @@ def main(argv=None):
                                        gif=a.gif, gif_delay=a.gif_delay, gif_width=a.gif_width)
             out = a.output or os.path.join(os.path.dirname(pcb), "renders", "copper_layers")
             copper.export_copper(a.kicad_cli, pcb, layers, sel, out, opt, job)
+        elif a.cmd == "stackup":
+            try:  # default captions (user layer names, pours) need pcbnew
+                caps = {l.name: l.caption for l in boardinfo.copper_layers(boardinfo.load(pcb))}
+            except ImportError:
+                caps = {}
+            caps.update(x.split("=", 1) for x in a.caption if "=" in x)
+            opt = stackup.StackupOptions(width=a.width, light=a.light, via=not a.no_via, captions=not a.no_captions)
+            out = a.output or os.path.join(os.path.dirname(pcb), "renders", "stackup")
+            stackup.export_stackup(pcb, out, opt, job, caps)
         else:
             names = list(render3d.VIEWS) if a.views == "all" else _names(a.views)
             opt = render3d.RenderOptions(quality=a.quality, floor=not a.no_floor, width=a.width, height=a.height,

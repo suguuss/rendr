@@ -8,6 +8,8 @@ and READMEs:
   an overview sheet and an animated GIF.
 - **3D renders**: raytraced views from several camera angles, plus a captioned
   overview sheet.
+- **Stackup**: a cross-section of the board with a table of every layer
+  (type, material, thickness, dielectric constant, loss tangent).
 
 Pick what you want in a window, click Run. KiCad stays usable while it works
 (the window is modeless, the rendering runs in the background).
@@ -66,6 +68,29 @@ Output (`<output>/3d/`): `1_top.png`, `2_bottom.png`, ..., `0_overview.png`.
 
 ![3D overview](docs/3d_overview.png)
 
+## Stackup
+
+One picture of the layer stack: a section through the board on the left (with a
+plated through via), the layer table on the right, leader lines between them.
+The tab shows a live preview; it is drawn with Pillow (no kicad-cli), so it is
+instant.
+
+- Read from the board's stackup (Board Setup > Board Stackup): copper, prepreg,
+  core and solder mask, with their materials, thicknesses, εr, tan δ, colours,
+  copper finish and the *impedance controlled* flag. Dielectrics with several
+  sublayers get one row each.
+- Band heights follow the real thicknesses, except that copper and solder mask
+  get a minimum height so they stay visible.
+- Copper rows carry the captions of the *Copper layers* tab (`GND plane`...).
+- A board without a stackup (never edited, or made before KiCad 5.1) is drawn
+  with KiCad's default stack (35 µm copper, the board thickness split evenly)
+  and says so under the table. So does a stackup that doesn't add up to the
+  board thickness setting.
+- *Light background* gives a white picture for documents.
+
+Output (`<output>/stackup/`): `stackup.png`.
+![Stackup](docs/stackup.png)
+
 ## Good to know
 
 - rendr works on the **board file on disk**: save (Ctrl+S) first. The window
@@ -112,11 +137,13 @@ python3 -m rendr copper board.kicad_pcb --layers F.Cu,B.Cu --from-below B.Cu \
 python3 -m rendr 3d --list                                  # available views
 python3 -m rendr 3d board.kicad_pcb --views top,iso_front_left --quality basic
 python3 -m rendr 3d board.kicad_pcb --width 2560 --height 1600 --transparent
+python3 -m rendr stackup board.kicad_pcb --light --caption "In1.Cu=GND plane"
 ```
 
-`python3 -m rendr copper -h` / `3d -h` list every option. The command line needs
-a Python that can `import pcbnew` (KiCad's own on Windows/macOS) for the copper
-stack.
+`python3 -m rendr copper -h` / `3d -h` / `stackup -h` list every option. The
+command line needs a Python that can `import pcbnew` (KiCad's own on
+Windows/macOS) for the copper stack. `stackup` runs without it, with empty
+captions unless given with `--caption`.
 
 ## Files
 
@@ -126,8 +153,9 @@ stack.
 | `dialog.py` | the window: lists, options, background run, settings |
 | `copper.py` | copper layer images, overview, GIF |
 | `render3d.py` | 3D views, temp KiCad config, overview |
+| `stackup.py` | stackup read from the board file, cross-section picture |
 | `boardinfo.py` | copper stack, layer colours, default captions |
-| `common.py` | kicad-cli lookup, cancellable runs, overview grid |
+| `common.py` | kicad-cli lookup, cancellable runs, overview grid, s-expression blocks |
 | `__main__.py` | command line |
 
 ## Credits

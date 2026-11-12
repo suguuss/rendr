@@ -36,6 +36,25 @@ class Job:
             raise Cancelled()
 
 
+def block_end(s, j):
+    """Index of the ")" closing the s-expression that opens at s[j]."""
+    depth, k, n = 0, j, len(s)
+    while k < n:
+        c = s[k]
+        if c == '"':
+            k += 1
+            while s[k] != '"':
+                k += 2 if s[k] == "\\" else 1
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return k
+        k += 1
+    return n - 1
+
+
 def find_kicad_cli():
     """kicad-cli on PATH, else next to KiCad's own executable / Python, else usual install dirs."""
     exe = "kicad-cli.exe" if sys.platform == "win32" else "kicad-cli"

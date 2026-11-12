@@ -1,4 +1,4 @@
-"""The rendr window: pick copper layers or 3D views, options, output folder, run.
+"""The rendr window: pick copper layers, 3D views or the stackup, options, output folder, run.
 
 Modeless (KiCad stays usable while it renders); the work runs in a thread, kicad-cli
 does the plotting and rendering on the board file saved on disk.
@@ -10,7 +10,9 @@ import threading
 import wx
 import wx.dataview as dv
 
-from . import boardinfo, copper, render3d
+from PIL import Image
+
+from . import boardinfo, copper, render3d, stackup
 from .common import Cancelled, Job, JobError, find_kicad_cli
 
 SETTINGS = os.path.join(render3d.user_config_dir(), "rendr.json")
@@ -96,6 +98,7 @@ class RendrDialog(wx.Dialog):
         self.book = wx.Notebook(p)
         self.book.AddPage(self._copper_page(self.book), "Copper layers")
         self.book.AddPage(self._render_page(self.book), "3D renders")
+        self.book.AddPage(self._stackup_page(self.book), "Stackup")
         self.book.SetSelection(self.settings.get("tab", 0))
         top.Add(self.book, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
 
@@ -122,7 +125,7 @@ class RendrDialog(wx.Dialog):
         self.SetSize(self.FromDIP(wx.Size(720, 760)))
         self.SetMinSize(self.FromDIP(wx.Size(560, 600)))
 
-        self.book.Bind(wx.EVT_NOTEBOOK_PAGE_CHANGED, lambda e: (e.Skip(), wx.CallAfter(self.update_run_label)))
+        self.book.Bind(wx.EVT_NOTEBOOK_PAGE_CHANGED, self.on_page)
         self.layer_list.Bind(dv.EVT_DATAVIEW_ITEM_VALUE_CHANGED, lambda e: self.update_run_label())
         self.view_list.Bind(wx.EVT_CHECKLISTBOX, lambda e: self.update_run_label())
         self.gif.Bind(wx.EVT_CHECKBOX, lambda e: self._gif_enable())
@@ -136,6 +139,8 @@ class RendrDialog(wx.Dialog):
         self._zones_enable()
         self.update_run_label()
         self.check_unsaved()
+        if self.book.GetSelection() == 2:
+            wx.CallAfter(self.refresh_preview)
         self.CentreOnParent()
 
     # ---------------------------------------------------------------- pages
@@ -257,6 +262,87 @@ class RendrDialog(wx.Dialog):
         pg.SetSizer(s)
         return pg
 
+    def _stackup_page(self, book):
+        pg = wx.Panel(book)
+        s = wx.BoxSizer(wx.VERTICAL)
+        ss = self.settings.get("stackup", {})
+        d = stackup.StackupOptions()
+        self.stack = None        # Stackup read from the file, None = read again
+        self.stack_img = None    # full-size preview image (PIL)
+        self.stack_err = None
+        self.preview = wx.Panel(pg, style=wx.BORDER_THEME)
+        self.preview.SetBackgroundStyle(wx.BG_STYLE_PAINT)
+        self.preview.Bind(wx.EVT_PAINT, self._paint_preview)
+        self.preview.Bind(wx.EVT_SIZE, lambda e: (self.preview.Refresh(), e.Skip()))
+        s.Add(self.preview, 1, wx.EXPAND | wx.ALL, 8)
+
+        box = wx.StaticBoxSizer(wx.VERTICAL, pg, "Options")
+        sb = box.GetStaticBox()
+        row = wx.BoxSizer(wx.HORIZONTAL)
+        self.st_width = wx.SpinCtrl(sb, min=600, max=8000, initial=ss.get("width", d.width))
+        row.Add(wx.StaticText(sb, label="Image width (px)"), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
+        row.Add(self.st_width)
+        box.Add(row, 0, wx.ALL, 4)
+        self.st_light = wx.CheckBox(sb, label="Light background (for documents)")
+        self.st_light.SetValue(ss.get("light", d.light))
+        self.st_via = wx.CheckBox(sb, label="Draw a plated through via")
+        self.st_via.SetValue(ss.get("via", d.via))
+        self.st_captions = wx.CheckBox(sb, label="Copper layer captions (edited in the Copper layers tab)")
+        self.st_captions.SetValue(ss.get("captions", d.captions))
+        for c in (self.st_light, self.st_via, self.st_captions):
+            box.Add(c, 0, wx.ALL, 4)
+            c.Bind(wx.EVT_CHECKBOX, lambda e: self.refresh_preview())
+        self.st_width.Bind(wx.EVT_SPINCTRL, lambda e: self.refresh_preview())
+        s.Add(box, 0, wx.EXPAND | wx.ALL, 8)
+        pg.SetSizer(s)
+        return pg
+
+    # ------------------------------------------------------------- preview
+    def stackup_options(self):
+        return stackup.StackupOptions(width=self.st_width.GetValue(), light=self.st_light.GetValue(),
+                                      via=self.st_via.GetValue(), captions=self.st_captions.GetValue())
+
+    def current_captions(self):
+        return {l.name: self.layer_list.GetTextValue(r, COL_CAPTION) for r, l in enumerate(self.layers)}
+
+    def refresh_preview(self):
+        """Redraw the stackup (cheap: Pillow only, the file is read once per visit of the tab)."""
+        try:
+            if self.stack is None:
+                self.stack = stackup.read_stackup(self.pcb)
+            opt = self.stackup_options()
+            opt.width = min(opt.width, 2400)  # same layout, the preview is scaled down anyway
+            title = os.path.splitext(os.path.basename(self.pcb))[0] + " stackup"
+            self.stack_img = stackup.draw(self.stack, opt, title, self.current_captions())
+            self.stack_err = None
+        except (OSError, JobError, ValueError) as e:
+            self.stack_img, self.stack_err = None, f"Cannot read the stackup: {e}"
+        self.preview.Refresh()
+
+    def _paint_preview(self, _evt):
+        dc = wx.AutoBufferedPaintDC(self.preview)
+        dc.SetBackground(wx.Brush(self.preview.GetBackgroundColour()))
+        dc.Clear()
+        w, h = self.preview.GetClientSize()
+        img = self.stack_img
+        if img is None:
+            dc.DrawText(self.stack_err or "", 10, 10)
+            return
+        s = min(w / img.width, h / img.height, 1.0)
+        if s <= 0:
+            return
+        im = img.resize((max(1, round(img.width * s)), max(1, round(img.height * s))), Image.LANCZOS)
+        wi = wx.Image(im.width, im.height)
+        wi.SetData(im.convert("RGB").tobytes())
+        dc.DrawBitmap(wi.ConvertToBitmap(), (w - im.width) // 2, (h - im.height) // 2)
+
+    def on_page(self, evt):
+        evt.Skip()
+        if evt.GetSelection() == 2:
+            self.stack = None  # the board may have been saved since
+            wx.CallAfter(self.refresh_preview)
+        wx.CallAfter(self.update_run_label)
+
     # --------------------------------------------------------------- state
     def _check_layers(self, on):
         for r in range(self.layer_list.GetItemCount()):
@@ -291,6 +377,9 @@ class RendrDialog(wx.Dialog):
         if self.book.GetSelection() == 0:
             n = len(self.selected_layers())
             self.run_btn.SetLabel(f"Export {n} layer{'s' if n != 1 else ''}")
+        elif self.book.GetSelection() == 2:
+            n = 1
+            self.run_btn.SetLabel("Export stackup")
         else:
             n = len(self.selected_views())
             self.run_btn.SetLabel(f"Render {n} view{'s' if n != 1 else ''}")
@@ -331,14 +420,16 @@ class RendrDialog(wx.Dialog):
                                     floor=self.floor.GetValue(), width=self.r_width.GetValue(),
                                     height=self.r_height.GetValue(), transparent=self.transparent.GetValue(),
                                     format=self.fmt.GetStringSelection(), overview=self.r_overview.GetValue())
+        st = self.stackup_options()
         self.settings["tab"] = self.book.GetSelection()
         self.settings["copper"] = vars(cu)
+        self.settings["stackup"] = vars(st)
         self.settings["render"] = dict(vars(r3), views=self.selected_views())
         self.bset.update(output=self.out.GetPath(), layers=self.selected_layers(),
                          from_below=[l.name for l in layers if l.from_below],
                          captions={l.name: l.caption for l in layers if l.caption != self.default_captions[l.name]})
         save_settings(self.settings)
-        return cu, r3
+        return cu, r3, st
 
     # ----------------------------------------------------------------- run
     def append_log(self, msg):
@@ -360,13 +451,17 @@ class RendrDialog(wx.Dialog):
             wx.MessageBox("Save the board first: rendr works on the board file.", "rendr", wx.ICON_WARNING, self)
             return
         self.check_unsaved()
-        cu, r3 = self.collect()
+        cu, r3, st = self.collect()
         out_root = self.out.GetPath() or os.path.join(os.path.dirname(self.pcb), "renders")
         cli = find_kicad_cli()
         if self.book.GetSelection() == 0:
             out = os.path.join(out_root, "copper_layers")
             sel = self.selected_layers()
             work = lambda job: copper.export_copper(cli, self.pcb, self.layers, sel, out, cu, job)
+        elif self.book.GetSelection() == 2:
+            out = os.path.join(out_root, "stackup")
+            caps = {l.name: l.caption for l in self.layers}
+            work = lambda job: stackup.export_stackup(self.pcb, out, st, job, caps)
         else:
             out = os.path.join(out_root, "3d")
             views = self.selected_views()

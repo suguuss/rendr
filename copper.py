@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 from PIL import Image, ImageChops, ImageDraw, ImageOps
 
-from .common import Job, JobError, font, overview, run
+from .common import Job, JobError, block_end, font, overview, run
 
 EDGE_COLOUR = "#D0D2CD"
 BACKGROUND = "#001023"
@@ -37,25 +37,6 @@ class CopperOptions:
     gif_width: int = 1200
 
 
-def _block_end(s, j):
-    """Index of the ")" closing the s-expression that opens at s[j]."""
-    depth, k, n = 0, j, len(s)
-    while k < n:
-        c = s[k]
-        if c == '"':
-            k += 1
-            while s[k] != '"':
-                k += 2 if s[k] == "\\" else 1
-        elif c == "(":
-            depth += 1
-        elif c == ")":
-            depth -= 1
-            if depth == 0:
-                return k
-        k += 1
-    return n - 1
-
-
 def _cut(s, spans):
     """s without the given (start, end) spans."""
     out, i = [], 0
@@ -72,7 +53,7 @@ def strip_zone_fills(path):
         s = f.read()
     spans, i = [], 0
     while (j := s.find("(filled_polygon", i)) >= 0:
-        i = _block_end(s, j) + 1
+        i = block_end(s, j) + 1
         spans.append((j, i))
     with open(path, "w", encoding="utf-8") as f:
         f.write(_cut(s, spans))
@@ -104,13 +85,13 @@ def strip_biggest_pours(path, min_share=BIGGEST_MIN_SHARE):
     xmax = ymax = float("-inf")
     for m in _ZONE.finditer(s):
         z0 = m.start()
-        z1 = _block_end(s, z0)
+        z1 = block_end(s, z0)
         body = s[z0:z1]
         net = _NET.search(body)
         net = net.group(1).rsplit("/", 1)[-1] if net else "?"
         i = 0
         while (j := body.find("(filled_polygon", i)) >= 0:
-            i = _block_end(body, j) + 1
+            i = block_end(body, j) + 1
             poly = body[j:i]
             layer = _LAYER.search(poly)
             pts = [(float(x), float(y)) for x, y in _XY.findall(poly)]

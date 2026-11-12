@@ -12,7 +12,7 @@ class Rendr(pcbnew.ActionPlugin):
     def defaults(self):
         self.name = "rendr: Board Images"
         self.category = "Export"
-        self.description = "Copper layer images and 3D renders of the board, picked from a window"
+        self.description = "Copper layer images, 3D renders and stackup of the board, picked from a window"
         self.show_toolbar_button = True
         self.icon_file_name = os.path.join(os.path.dirname(__file__), "icon.png")
 
