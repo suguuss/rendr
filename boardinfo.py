@@ -31,17 +31,33 @@ def _short(net):
     return net.rsplit("/", 1)[-1] or net
 
 
+def _zone_area(zone, lid):
+    """Filled area of the zone on that layer, its outline area while it is unfilled."""
+    try:
+        if zone.HasFilledPolysForLayer(lid):
+            area = zone.GetFilledPolysList(lid).Area()
+            if area > 0:
+                return area
+    except Exception:
+        pass
+    return zone.Outline().Area()
+
+
 def copper_layers(board):
     """[CopperLayer] top to bottom. Default caption: user layer name if set, else
-    Top/Inner n/Bottom, plus the nets poured on the layer."""
+    Top/Inner n/Bottom, plus the net of the layer's biggest pour (the smaller zones
+    are not the pour, they go unnamed)."""
     ids = list(board.GetEnabledLayers().CuStack())
-    pours = {i: [] for i in ids}
+    pours = {}  # layer id -> (area, net) of its biggest zone
     for z in board.Zones():
         if z.GetIsRuleArea() or not z.GetNetname():
             continue
         for lid in z.GetLayerSet().CuStack():
-            if lid in pours and _short(z.GetNetname()) not in pours[lid]:
-                pours[lid].append(_short(z.GetNetname()))
+            if lid not in ids:
+                continue
+            area = _zone_area(z, lid)
+            if lid not in pours or area > pours[lid][0]:
+                pours[lid] = (area, _short(z.GetNetname()))
     out = []
     for pos, lid in enumerate(ids, 1):
         name = board.GetStandardLayerName(lid)
@@ -54,10 +70,8 @@ def copper_layers(board):
             what = "Bottom"
         else:
             what = "Inner " + name[2:-3]
-        nets = pours[lid]
-        if nets:
-            shown = ", ".join(nets[:4]) + (f" +{len(nets) - 4}" if len(nets) > 4 else "")
-            what += f": pours {shown}"
+        if lid in pours:
+            what += f": {pours[lid][1]} Pour"
         out.append(CopperLayer(name, pos, colour_for(name), what))
     return out
 

@@ -25,7 +25,8 @@ rev. H by Olimex, a 6-layer open-source board (see [Credits](#credits)).
   underneath, so each image shows the layer in context.
 - **From below** mirrors that image, as if you were looking at the bottom of the board.
 - **Caption** is the line under the title. It starts with the layer's user name
-  (or Top / Inner n / Bottom) and the nets poured on it. Click to edit it
+  (or Top / Inner n / Bottom) and the net of its biggest pour
+  (`Inner 1: GND Pour`). Click to edit it
   (`GND plane`, `+1V8 plane + power traces`...). Edits are remembered per board.
 - **Zones**: *Refill* fills every zone in a temp copy first (the board file is
   never written), *As saved* plots the fills stored in the file, *Hidden* strips
